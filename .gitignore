@@ -5,3 +5,6 @@ __pycache__/
 venv/
 .pytest_cache/
 .DS_Store
+
+# 开发过程记录，不公开
+.dev-notes/
