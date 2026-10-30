@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codex 链路体检</title>
+<style>
+  /* ---------------------------------------------------------------
+     通电链路
+     近黑底、1px 细线、无阴影。颜色只表示状态，不表示心情。
+     全页唯一动效是四段链上的小方块逐格亮起。
+     --------------------------------------------------------------- */
+  :root {
+    --ink:      #090b0f;
+    --panel:    #101319;
+    --panel-2:  #161a22;
+    --rule:     #212734;
+    --rule-2:   #2b3240;
+    --text:     #e9eef6;
+    --dim:      #79839a;
+    --faint:    #4a5464;
+    --ok:       #4cc38a;
+    --warn:     #d9a253;
+    --bad:      #ea6a5e;
+    --sans: "Segoe UI Variable Text", "Segoe UI", -apple-system, "PingFang SC",
+            "Microsoft YaHei", system-ui, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, "Liberation Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { background: var(--ink); }
+  body {
+    margin: 0;
+    padding: 28px 32px 56px;
+    color: var(--text);
+    font: 15px/1.65 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  .shell { max-width: 1240px; margin: 0 auto; }
+
+  /* ---------- 页头 ---------- */
+  header {
+    display: flex; align-items: center; gap: 16px;
+    padding-bottom: 18px; border-bottom: 1px solid var(--rule);
+    flex-wrap: wrap;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 16px; font-weight: 600; letter-spacing: .2px;
+  }
+  .mark {
+    width: 8px; height: 8px; border-radius: 1px;
+    background: var(--ok); flex: none;
+  }
+  .mark.busy { background: var(--faint); animation: breathe 1.4s ease-in-out infinite; }
+  .meta {
+    display: flex; gap: 6px; flex-wrap: wrap;
+    margin-left: 4px;
+  }
+  .chip {
+    font-family: var(--mono); font-size: 12.5px; line-height: 1;
+    color: var(--dim); background: var(--panel);
+    border: 1px solid var(--rule); border-radius: 4px;
+    padding: 6px 9px; white-space: nowrap;
+  }
+  .chip b { color: var(--text); font-weight: 500; }
+  .chip.warn { color: var(--warn); border-color: #3a3020; }
+  .chip.bad  { color: var(--bad);  border-color: #3d2422; }
+  .grow { flex: 1; }
+
+  button {
+    font: inherit; font-size: 14px;
+    color: var(--text); background: var(--panel-2);
+    border: 1px solid var(--rule-2); border-radius: 6px;
+    padding: 8px 17px; cursor: pointer;
+    transition: background .14s, border-color .14s;
+  }
+  button:hover:not(:disabled) { background: #1d222c; border-color: #3a4354; }
+  button:disabled { color: var(--faint); cursor: default; }
+  button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
+
+  /* ---------- 结论区：全页唯一大字 ---------- */
+  .verdict { padding: 42px 0 34px; }
+  .verdict-eyebrow {
+    margin: 0 0 10px; font-size: 11px; letter-spacing: 1.4px;
+    color: var(--faint); text-transform: uppercase;
+  }
+  .verdict-text {
+    margin: 0;
+    font-size: 30px; line-height: 1.35; font-weight: 600;
+    letter-spacing: -.2px;
+    max-width: 30em;
+  }
+  .verdict-text.bad  { color: var(--bad); }
+  .verdict-text.warn { color: var(--warn); }
+  .verdict-text.ok   { color: var(--ok); }
+
+  /* 四问里的后三问：稳不稳 / 问题在哪 / 怎么解决 */
+  .answers {
+    margin-top: 26px;
+    border: 1px solid var(--rule); border-radius: 6px;
+    background: var(--panel); overflow: hidden;
+  }
+  .answer {
+    display: grid; grid-template-columns: 96px 1fr;
+    gap: 18px; padding: 14px 20px;
+    border-top: 1px solid var(--rule);
+  }
+  .answer:first-child { border-top: none; }
+  .ans-k {
+    font-size: 12.5px; color: var(--faint); letter-spacing: .5px;
+    padding-top: 1px;
+  }
+  .ans-v { font-size: 14.5px; line-height: 1.6; }
+  .ans-v.bad  { color: var(--bad); }
+  .ans-v.warn { color: var(--warn); }
+  .ans-v.ok   { color: var(--text); }
+  .ans-v.fix  { color: #9db4d8; }
+
+  /* 复制提示词 */
+  .answer-action { padding: 12px 20px; }
+  .copybtn {
+    font: inherit; font-size: 12.5px;
+    color: #9db4d8; background: transparent;
+    border: 1px solid var(--rule-2); border-radius: 5px;
+    padding: 5px 12px; cursor: pointer;
+    transition: background .14s, border-color .14s, color .14s;
+  }
+  .copybtn:hover { background: #1a2230; border-color: #3a4354; color: var(--text); }
+  .copybtn:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
+  .copybtn.done { color: var(--ok); border-color: #1e3b2e; }
+  .copybtn.small { font-size: 11.5px; padding: 3px 9px; margin-top: 8px; }
+
+  /* 两种接入方式各自能不能用 */
+  .modes {
+    display: grid; grid-template-columns: repeat(2, 1fr);
+    gap: 12px; margin-top: 24px;
+  }
+  .mode {
+    border: 1px solid var(--rule); border-radius: 6px;
+    background: var(--panel); padding: 15px 18px;
+    border-left: 2px solid var(--faint);
+  }
+  .mode.ok  { border-left-color: var(--ok); }
+  .mode.bad { border-left-color: var(--bad); }
+  .mode-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; margin-bottom: 6px;
+  }
+  .mode-title { font-size: 15px; font-weight: 600; }
+  .mode-state { font-size: 13px; font-weight: 600; letter-spacing: .5px; }
+  .mode.ok  .mode-state { color: var(--ok); }
+  .mode.bad .mode-state { color: var(--bad); }
+  .mode-hint { font-size: 12.5px; color: var(--faint); }
+  .mode-detail { margin-top: 9px; font-size: 12.5px; color: var(--dim); line-height: 1.65; }
+
+  .roleline { font-size: 12px; color: var(--faint); margin-top: 3px; }
+
+  /* ---------- 四段链：签名元素 ---------- */
+  .chain {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    border: 1px solid var(--rule); border-radius: 6px;
+    background: var(--panel); overflow: hidden;
+  }
+  .seg { padding: 17px 20px 16px; border-left: 1px solid var(--rule); }
+  .seg:first-child { border-left: none; }
+  .seg-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 10px; margin-bottom: 12px;
+  }
+  .seg-title { font-size: 13.5px; color: var(--dim); letter-spacing: .4px; }
+  .seg-count {
+    font-family: var(--mono); font-size: 15px; font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+  .seg.ok   .seg-count { color: var(--ok); }
+  .seg.warn .seg-count { color: var(--warn); }
+  .seg.bad  .seg-count { color: var(--bad); }
+
+  .cells { display: flex; gap: 3px; }
+  .cells i {
+    display: block; flex: 1 1 0; height: 22px; border-radius: 2px;
+    background: #1b212c; border: 1px solid #232b38;
+  }
+  .cells i.on   { background: var(--ok); border-color: var(--ok); }
+  .cells i.off  { background: transparent; border-color: #3a2f2f; }
+  .cells i.warn { background: var(--warn); border-color: var(--warn); }
+  .cells i.pending { animation: breathe 1.4s ease-in-out infinite; }
+
+  @keyframes breathe { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+  @keyframes light  { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: none; } }
+
+  .seg-hint { margin-top: 11px; font-size: 12.5px; color: var(--faint); line-height: 1.5; }
+
+  /* ---------- 明细矩阵 ---------- */
+  h2 {
+    font-size: 12px; font-weight: 500; color: var(--faint);
+    letter-spacing: 1.2px; text-transform: uppercase;
+    margin: 44px 0 12px;
+  }
+  .tablewrap { overflow-x: auto; margin: 0 -4px; padding: 0 4px; }
+  table {
+    width: 100%; border-collapse: collapse; table-layout: fixed;
+    font-size: 14.5px; min-width: 840px;
+  }
+  th {
+    text-align: left; font-size: 12px; font-weight: 500; color: var(--faint);
+    letter-spacing: .6px; padding: 0 10px 10px; border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  th.col-name { width: 460px; }
+  th.col-stage { width: 96px; text-align: right; }
+  th.col-stable { width: 84px; text-align: right; }
+  th.col-verdict { padding-left: 22px; }
+  td {
+    padding: 14px 10px; border-bottom: 1px solid #171c25;
+    vertical-align: middle;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: #0d1015; }
+  td.col-verdict { padding-left: 22px; }
+
+  /* 单元格内部用 flex，不能加在 td 上，否则表格布局会被破坏。
+     flex-wrap 是必需的：路径长的时候宁可变两行，也不能压到下一列。 */
+  .idcell {
+    display: flex; flex-wrap: wrap; align-items: baseline;
+    column-gap: 8px; row-gap: 1px;
+  }
+  .dmark { width: 5px; height: 5px; border-radius: 50%; flex: none; transform: translateY(-3px); }
+  .dmark.ok { background: var(--ok); }
+  .dmark.warn { background: var(--warn); }
+  .dmark.bad { background: var(--bad); }
+  .hostname { font-family: var(--mono); font-size: 14px; }
+  .pathname { font-family: var(--mono); font-size: 12.5px; color: var(--faint); }
+
+  td.num {
+    font-family: var(--mono); font-size: 13.5px; text-align: right;
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  td.num.ok   { color: var(--text); }
+  td.num.off  { color: #3d4350; }
+  td.num.warn { color: var(--warn); }
+  td.num.bad  { color: var(--bad); }
+
+  .kind {
+    display: inline-block; font-family: var(--sans); font-size: 10.5px;
+    letter-spacing: .5px; color: var(--faint);
+    border: 1px solid var(--rule-2); border-radius: 3px;
+    padding: 0 4px; margin-left: 2px; vertical-align: 1px;
+  }
+
+  .tag { display: inline-block; font-size: 13px; white-space: nowrap; color: var(--dim); }
+  .tag.ok   { color: var(--ok); }
+  .tag.warn { color: var(--warn); }
+  .tag.bad  { color: var(--bad); }
+
+  /* ---------- 待处理 ---------- */
+  .todos { margin-top: 6px; }
+  .todo {
+    display: grid; grid-template-columns: 1px 1fr; gap: 15px;
+    padding: 15px 0; border-bottom: 1px solid #171c25;
+  }
+  .todo:last-child { border-bottom: none; }
+  .todo .bar { border-radius: 1px; }
+  .todo.bad  .bar { background: var(--bad); }
+  .todo.warn .bar { background: var(--warn); }
+  .todo-title { font-weight: 600; font-size: 15px; margin-bottom: 6px; }
+  .todo-advice { color: #9db4d8; font-size: 14px; line-height: 1.7; }
+
+  /* ---------- 环境行 ---------- */
+  .env {
+    margin-top: 36px; padding-top: 18px; border-top: 1px solid var(--rule);
+    display: flex; flex-wrap: wrap; gap: 8px 24px;
+    font-size: 12.5px; color: var(--faint);
+  }
+  .env span b { color: var(--dim); font-weight: 500; font-family: var(--mono); }
+  .foot {
+    margin-top: 20px; font-size: 12px; color: #47505f; line-height: 1.9;
+  }
+
+  .empty { color: var(--faint); font-size: 14px; padding: 6px 0; }
+
+  @media (max-width: 1000px) {
+    body { padding: 22px 20px 44px; }
+    .chain { grid-template-columns: repeat(2, 1fr); }
+    .seg:nth-child(3) { border-left: none; }
+    .seg:nth-child(n+3) { border-top: 1px solid var(--rule); }
+    .verdict-text { font-size: 24px; }
+    th.col-name { width: 300px; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <header>
+    <div class="brand"><span class="mark busy" id="mark"></span>Codex 链路体检</div>
+    <div class="meta" id="meta"></div>
+    <span class="grow"></span>
+    <button id="rescan">重新检测</button>
+  </header>
+
+  <section class="verdict">
+    <p class="verdict-eyebrow" id="verdictEyebrow">通不通</p>
+    <p class="verdict-text" id="verdictText">正在检测</p>
+    <div class="answers" id="answers"></div>
+  </section>
+
+  <section class="modes" id="modes"></section>
+
+  <section class="chain" id="chain"></section>
+  <h2>逐域名明细</h2>
+  <div class="tablewrap" id="matrix"><div class="empty">等待结果…</div></div>
+
+  <h2 id="todosTitle">需要处理的</h2>
+  <div class="todos" id="todos"><div class="empty">等待结果…</div></div>
+
+  <div class="env" id="env"></div>
+  <div class="foot">
+    只读检测：不改代理设置、不改 hosts、不写注册表、不上传任何数据。只监听 127.0.0.1。
+  </div>
+
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+const STAGES = [
+  { key: "dns",  title: "解析", hint: "域名能不能变成地址" },
+  { key: "tcp",  title: "连接", hint: "TCP 能不能握上手" },
+  { key: "tls",  title: "加密", hint: "TLS 能不能谈成" },
+  { key: "http", title: "应答", hint: "对面有没有真的回话" },
+];
+
+const WAITING = {
+  eyebrow: "通不通",
+  text: "正在检测",
+  answers: [
+    ["稳不稳", "正在跑第 1 轮…"],
+    ["问题在哪", "等待结果…"],
+    ["怎么解决", "等待结果…"],
+  ],
+};
+
+// 当前一次扫描的结果，复制按钮要从这里取提示词
+let CURRENT = null;
+let TODOS = [];
+let POLL = null;
+
+const VERDICT_TAG = {
+  reachable:      { text: "通",     level: "ok"   },
+  region_blocked: { text: "地区限制", level: "bad"  },
+  unreachable:    { text: "不通",   level: "bad"  },
+  server_error:   { text: "对方故障", level: "warn" },
+  unknown:        { text: "未定",   level: "warn" },
+};
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"]/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]
+  ));
+}
+
+function renderSkeleton(total) {
+  $("chain").innerHTML = STAGES.map((s) => `
+    <div class="seg">
+      <div class="seg-head">
+        <span class="seg-title">${esc(s.title)}</span>
+        <span class="seg-count">—/—</span>
+      </div>
+      <div class="cells">${"<i class='pending'></i>".repeat(total || 7)}</div>
+      <div class="seg-hint">${esc(s.hint)}</div>
+    </div>`).join("");
+}
+
+function renderChain(stages, endpoints) {
+  const byKey = {};
+  for (const s of stages || []) byKey[s.key] = s;
+
+  $("chain").innerHTML = STAGES.map((spec, segIndex) => {
+    const s = byKey[spec.key];
+    const passed = s ? s.passed : 0;
+    const total = s ? s.total : endpoints.length;
+    const level = s ? s.level : "";
+
+    // 小方块按域名顺序排，亮的表示这一段通过
+    const cells = endpoints.map((e, i) => {
+      const ok = (e.stages || {})[spec.key]?.ok;
+      const cls = ok ? "on" : "off";
+      const delay = (segIndex * 70 + i * 28);
+      return `<i class="${cls}" style="animation: light .32s ease-out ${delay}ms both"></i>`;
+    }).join("");
+
+    return `
+      <div class="seg ${level}">
+        <div class="seg-head">
+          <span class="seg-title">${esc(spec.title)}</span>
+          <span class="seg-count">${passed}/${total}</span>
+        </div>
+        <div class="cells">${cells}</div>
+        <div class="seg-hint">${esc(spec.hint)}</div>
+      </div>`;
+  }).join("");
+}
+
+function renderMeta(env, trace) {
+  const chips = [];
+  const proxyEnv = env.proxy_env || {};
+  const https = proxyEnv.HTTPS_PROXY || proxyEnv.https_proxy;
+  chips.push(`<span class="chip">代理 <b>${https ? esc(https.replace(/^https?:\/\//, "")) : "未设"}</b></span>`);
+
+  const tun = env.tun_guess || {};
+  const tunLevel = tun.verdict && tun.verdict.indexOf("很可能") === 0 ? "warn" : "";
+  chips.push(`<span class="chip ${tunLevel}">TUN <b>${esc(tun.verdict || "未判定")}</b></span>`);
+
+  if (trace && trace.loc) {
+    const loc = String(trace.loc).toUpperCase();
+    const suspect = ["CN", "HK", "MO", "RU", "IR", "KP", "SY", "CU"].includes(loc);
+    chips.push(`<span class="chip ${suspect ? "bad" : ""}">出口 <b>${esc(loc)}</b></span>`);
+  } else {
+    chips.push(`<span class="chip">出口 <b>未知</b></span>`);
+  }
+
+  $("meta").innerHTML = chips.join("");
+}
+
+function renderMatrix(endpoints) {
+  if (!endpoints.length) {
+    $("matrix").innerHTML = '<div class="empty">没有结果。</div>';
+    return;
+  }
+
+  const head = `
+    <tr>
+      <th class="col-name">域名</th>
+      ${STAGES.map((s) => `<th class="col-stage">${esc(s.title)}</th>`).join("")}
+      <th class="col-stable">稳定</th>
+      <th class="col-verdict">判定</th>
+    </tr>`;
+
+  const rows = endpoints.map((e) => {
+    const tag = VERDICT_TAG[e.verdict] || VERDICT_TAG.unknown;
+    const stages = e.stages || {};
+
+    const cells = STAGES.map((spec) => {
+      const st = stages[spec.key] || { ok: false, label: "—" };
+      const cls = st.ok ? (e.verdict === "server_error" && spec.key === "http" ? "warn" : "ok") : "off";
+      return `<td class="num ${cls}">${esc(st.label)}</td>`;
+    }).join("");
+
+    // 稳定：跑了几轮、成了几轮
+    const ok = e.rounds_ok || 0;
+    const total = e.rounds_total || 0;
+    let stableCls = "off";
+    let stableText = "—";
+    if (total) {
+      stableText = `${ok}/${total}`;
+      stableCls = ok === total ? "ok" : (ok === 0 ? "bad" : "warn");
+    }
+
+    const kindBadge = e.kind === "ws" ? '<span class="kind">WS</span>' : "";
+
+    return `
+      <tr>
+        <td class="col-name">
+          <div class="idcell">
+            <span class="dmark ${tag.level}"></span>
+            <span class="hostname">${esc(e.host)}</span>
+            <span class="pathname">${esc(e.path)}${kindBadge}</span>
+          </div>
+          <div class="roleline">${esc(e.role || "")}</div>
+        </td>
+        ${cells}
+        <td class="num ${stableCls}">${stableText}</td>
+        <td class="col-verdict"><span class="tag ${tag.level}">${esc(tag.text)}</span></td>
+      </tr>`;
+  }).join("");
+
+  $("matrix").innerHTML = `<table><thead>${head}</thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderTodos(findings) {
+  // 最要紧的那条已经写在总结的「问题在哪」里了，这里不再重复一遍
+  const rest = (findings || [])
+    .filter((f) => !f.primary && (f.level === "bad" || f.level === "warn"))
+    .slice(0, 3);
+  TODOS = rest;
+
+  if (!rest.length) {
+    $("todosTitle").style.display = "none";
+    $("todos").style.display = "none";
+    $("todos").innerHTML = "";
+    return;
+  }
+
+  $("todosTitle").style.display = "";
+  $("todos").style.display = "";
+  $("todosTitle").textContent = `其余 ${rest.length} 个问题`;
+  $("todos").innerHTML = rest.map((f, index) => `
+    <div class="todo ${esc(f.level)}">
+      <div class="bar"></div>
+      <div>
+        <div class="todo-title">${esc(f.title)}</div>
+        <div class="todo-advice">${esc(f.advice)}</div>
+        ${f.prompt ? `<button class="copybtn small" data-copy="finding" data-idx="${index}">复制排查提示词</button>` : ""}
+      </div>
+    </div>`).join("");
+}
+
+function renderEnv(data) {
+  const env = data.env || {};
+  const trace = data.trace || {};
+  const items = [];
+
+  const eg = env.egress || {};
+  if (eg.ipv4) items.push(`<span>出口网卡 <b>${esc(eg.ipv4)}</b></span>`);
+  if (eg.ipv6) items.push(`<span>v6 网卡 <b>${esc(eg.ipv6)}</b></span>`);
+
+  const sys = env.system_proxy || {};
+  if (sys.available) {
+    items.push(`<span>系统代理 <b>${sys.enabled ? esc(sys.server || "已开") : "未开"}</b></span>`);
+  }
+
+  if (trace.colo) items.push(`<span>机房 <b>${esc(trace.colo)}</b></span>`);
+  if (trace.warp) items.push(`<span>WARP <b>${esc(trace.warp)}</b></span>`);
+
+  const issuers = [...new Set((data.endpoints || []).map((e) => e.cert_issuer).filter(Boolean))];
+  if (issuers.length) items.push(`<span>证书 <b>${esc(issuers.join("、"))}</b></span>`);
+
+  items.push(`<span>检测时间 <b>${esc(data.generated_at)}</b></span>`);
+
+  $("env").innerHTML = items.join("");
+}
+
+function renderModes(modes) {
+  if (!modes || !modes.length) {
+    $("modes").innerHTML = "";
+    return;
+  }
+  $("modes").innerHTML = modes.map((m) => `
+    <div class="mode ${m.available ? "ok" : "bad"}">
+      <div class="mode-head">
+        <span class="mode-title">${esc(m.title)}</span>
+        <span class="mode-state">${m.available ? "能用" : "用不了"}</span>
+      </div>
+      <div class="mode-hint">${esc(m.hint)}</div>
+      <div class="mode-detail">${esc(m.detail)}</div>
+    </div>`).join("");
+}
+
+function renderVerdict(data) {
+  const s = data.summary || {};
+  const reach = s.reach || { level: "warn", text: "检测完成，但没有形成结论。" };
+
+  const el = $("verdictText");
+  el.textContent = reach.text;
+  el.className = "verdict-text " + (reach.level || "");
+  $("verdictEyebrow").textContent = "通不通";
+
+  const rows = [
+    ["稳不稳", s.stability, ""],
+    ["问题在哪", s.cause, ""],
+    ["怎么解决", s.fix, "fix"],
+  ];
+
+  let html = rows.map(([key, value, extra]) => {
+    const v = value || { level: "ok", text: "—" };
+    const cls = extra || v.level || "";
+    return `<div class="answer">
+      <span class="ans-k">${esc(key)}</span>
+      <span class="ans-v ${cls}">${esc(v.text)}</span>
+    </div>`;
+  }).join("");
+
+  // 有具体可修的问题时，给一个能直接粘给自己 agent 的提示词
+  const primary = (data.findings || []).find((f) => f.primary && f.prompt);
+  if (primary) {
+    html += `<div class="answer answer-action">
+      <span class="ans-k"></span>
+      <span><button class="copybtn" data-copy="primary">复制排查提示词</button></span>
+    </div>`;
+  }
+
+  $("answers").innerHTML = html;
+}
+
+function renderWaiting() {
+  $("verdictEyebrow").textContent = WAITING.eyebrow;
+  $("verdictText").className = "verdict-text";
+  $("verdictText").textContent = WAITING.text;
+  $("answers").innerHTML = `
+    <div class="answer">
+      <span class="ans-k">稳不稳</span>
+      <span class="ans-v" id="progressLine">正在跑第 1 轮…</span>
+    </div>
+    <div class="answer">
+      <span class="ans-k">问题在哪</span>
+      <span class="ans-v">等待结果…</span>
+    </div>
+    <div class="answer">
+      <span class="ans-k">怎么解决</span>
+      <span class="ans-v fix">等待结果…</span>
+    </div>`;
+}
+
+/* ---------- 进度轮询 ----------
+   扫描是同步阻塞的，浏览器拿不到中间态，
+   只能让页面隔一会儿问一下服务端跑到第几轮了。 */
+function startProgress() {
+  stopProgress();
+  POLL = setInterval(async () => {
+    try {
+      const res = await fetch("/api/progress", { cache: "no-store" });
+      const p = await res.json();
+      if (!p.running) return;
+      const line = $("progressLine");
+      if (!line) return;
+      line.textContent = `正在跑第 ${p.done}/${p.total} 轮，已用 ${p.elapsed} 秒。`;
+    } catch (err) {
+      /* 轮询失败不影响主流程 */
+    }
+  }, 700);
+}
+
+function stopProgress() {
+  if (POLL) clearInterval(POLL);
+  POLL = null;
+}
+
+/* ---------- 复制提示词 ---------- */
+function promptFor(button) {
+  if (!CURRENT) return "";
+  if (button.dataset.copy === "primary") {
+    const f = (CURRENT.findings || []).find((x) => x.primary && x.prompt);
+    return f ? f.prompt : "";
+  }
+  if (button.dataset.copy === "finding") {
+    const f = TODOS[Number(button.dataset.idx)];
+    return f && f.prompt ? f.prompt : "";
+  }
+  return "";
+}
+
+async function copyText(text, button) {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (err) {
+    // 剪贴板不可用时退回到老办法
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    try { document.execCommand("copy"); } catch (e) { /* 实在不行就算了 */ }
+    document.body.removeChild(area);
+  }
+  const label = button.textContent;
+  button.textContent = "已复制";
+  button.classList.add("done");
+  setTimeout(() => {
+    button.textContent = label;
+    button.classList.remove("done");
+  }, 1600);
+}
+
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-copy]");
+  if (!button) return;
+  copyText(promptFor(button), button);
+});
+
+async function scan() {
+  const btn = $("rescan");
+  btn.disabled = true;
+  $("mark").className = "mark busy";
+  renderWaiting();
+  startProgress();
+  $("modes").innerHTML = "";
+  $("todosTitle").style.display = "";
+  $("todos").style.display = "";
+  $("todosTitle").textContent = "其余问题";
+  $("todos").innerHTML = '<div class="empty">等待结果…</div>';
+  $("matrix").innerHTML = '<div class="empty">等待结果…</div>';
+  renderSkeleton(8);
+
+  try {
+    const res = await fetch("/api/scan", { cache: "no-store" });
+    const data = await res.json();
+    CURRENT = data;
+
+    if (data.error) {
+      $("verdictText").className = "verdict-text bad";
+      $("verdictText").textContent = "检测本身失败了";
+      $("answers").innerHTML = `<div class="answer">
+        <span class="ans-k">错误</span>
+        <span class="ans-v bad">${esc(data.error)}</span>
+      </div>`;
+      $("mark").className = "mark";
+      return;
+    }
+
+    renderVerdict(data);
+    renderModes((data.summary || {}).modes);
+    renderMeta(data.env || {}, data.trace || {});
+    renderChain(data.stages, data.endpoints || []);
+    renderMatrix(data.endpoints || []);
+    renderTodos(data.findings);
+    renderEnv(data);
+    $("mark").className = "mark";
+  } catch (err) {
+    $("verdictText").className = "verdict-text bad";
+    $("verdictText").textContent = "连不上本地服务";
+    $("answers").innerHTML = `<div class="answer">
+      <span class="ans-k">错误</span>
+      <span class="ans-v bad">${esc(err.message)}。确认这个程序还在运行，或换个端口重开。</span>
+    </div>`;
+    $("mark").className = "mark";
+  } finally {
+    stopProgress();
+    btn.disabled = false;
+  }
+}
+
+$("rescan").addEventListener("click", scan);
+scan();
+</script>
+</body>
+</html>

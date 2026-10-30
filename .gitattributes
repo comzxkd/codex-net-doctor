@@ -1,0 +1,10 @@
+# 统一的换行处理：源码一律 LF，避免跨平台 diff 噪音
+* text=auto eol=lf
+
+# 批处理必须 CRLF，否则 cmd.exe 会切错行
+*.bat text eol=crlf
+
+# 二进制
+*.png binary
+*.jpg binary
+*.webp binary
